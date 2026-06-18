@@ -1,12 +1,12 @@
 import json,time,os
 import sys
-import urllib3
 import string,random
 from colorama import init, Fore, Back, Style
 from urllib.parse import parse_qs, urlparse
 import requests
 
 init(autoreset=True)
+import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 def generate_pe_captcha_id() -> str:
@@ -63,21 +63,51 @@ def get_sauth_token(username, password) -> str:
 
     captcha_text = ""
     api_url = "http://110.42.70.32:13423/api/fantnel/captcha"
-    try:
-        api_res = session.post(api_url, data=captcha_res.content, timeout=8)
-        api_data = api_res.json()
-        if api_data.get("code") == 1:
-            captcha_text = str(api_data.get("data", "")).strip().lower()
-            print(
-                f"[4399PE] 验证码自动识别结果: {captcha_text}", file=sys.stderr
-            )
-        else:
-            raise Exception(f"接口响应 code 错误: {api_data.get('msg')}")
-    except Exception as e:
+    for attempt in range(1, 4):
         print(
-            f"⚠️ [4399PE] 远程识别失败 ({e})，切换到手动模式...",
+            f"[4399PE] Step 1: 获取并识别验证码 (第 {attempt}/3 次尝试)...",
             file=sys.stderr,
         )
+        try:
+            # 每次重试必须刷新 ID 和图片，确保请求处于全新状态
+            captcha_id = generate_pe_captcha_id()
+            captcha_url = f"https://ptlogin.4399.com/ptlogin/captcha.do?captchaId={captcha_id}"
+            captcha_res = session.get(captcha_url, timeout=8)
+
+            # 提交远程识别
+            api_res = session.post(
+                api_url, data=captcha_res.content, timeout=8
+            )
+            api_data = api_res.json()
+
+            if api_data.get("code") == 1:
+                captcha_text = str(api_data.get("data", "")).strip().lower()
+                print(
+                    f"[4399PE] 验证码自动识别成功: {captcha_text}",
+                    file=sys.stderr,
+                )
+                break  # 识别成功，提前跳出重试循环
+            else:
+                raise Exception(f"接口响应 code 错误: {api_data.get('msg')}")
+        except Exception as e:
+            print(
+                f"⚠️ [4399PE] 第 {attempt}/3 次自动识别失败: {e}",
+                file=sys.stderr,
+            )
+            if attempt < 3:
+                time.sleep(1)  # 失败后等待 1 秒再试，防止请求过快被接口熔断
+
+    # 3 次重试都失败后的 Fallback 兜底方案
+    if not captcha_text:
+        print(
+            f"⚠️ [4399PE] 远程识别连续 3 次失败，正在为您切换到手动模式...",
+            file=sys.stderr,
+        )
+        # 极端防错：如果因不可抗力连 URL 都没初始化成功，则在此处进行补救生成
+        if not captcha_url:
+            captcha_id = generate_pe_captcha_id()
+            captcha_url = f"https://ptlogin.4399.com/ptlogin/captcha.do?captchaId={captcha_id}"
+
         print(f"请打开验证码 URL 查看图片: {captcha_url}", file=sys.stderr)
         captcha_text = input("请输入看到的 4 位验证码: ").strip().lower()
 
@@ -168,14 +198,14 @@ def get_sauth_token(username, password) -> str:
         ),  # 对应 C# 中的整数 2
         "app_channel": "4399com",
         "platform": "ad",  # 对应手游 Android 标识
-        "client_login_sn": "4399FuckYou",  # 对齐 C# 硬编码
+        "client_login_sn": "Random_" + ''.join(random.choices(string.ascii_letters, k=16)),  # 对齐 C# 硬编码
         "gameid": "x19",
         "login_channel": "4399com",
         "sdk_version": "3.12.2",  # 手游 SDK 版本
         "sdkuid": str(uid),
         "sessionid": str(user_state),
         "udid": generate_pe_udid(),
-        "deviceid": "4399FuckYou",  # 对齐 C# 硬编码
+        "deviceid": "Random_" + ''.join(random.choices(string.ascii_letters, k=16)),  # 对齐 C# 硬编码
     }
 
     # 严格按照 C# 代码中的无空格紧凑 JSON 序列化形式
@@ -192,7 +222,7 @@ def get_sauth_token(username, password) -> str:
     uni_res = session.post(
         sauth_url, data=sauth_json_str, headers=sauth_headers, timeout=10
     )
-    print(f"[4399PE] uni_sauth 校验端返回成功", file=sys.stderr)
+    print(f"[4399PE] uni_sauth 校验端返回完成", file=sys.stderr)
 
     # 封装为外部调用期望的最终输出格式
     final_output = json.dumps(
@@ -203,8 +233,8 @@ def get_sauth_token(username, password) -> str:
 # ==================== 调用测试入口 ====================
 if __name__ == "__main__":
     os.system('cls')
-    print(Fore.GREEN + "网易4399Com转Sauth")
-    print(Fore.CYAN + "验证码识别api来自Fantnel\nFantnel官网:https://npyyds.top/")
+    print(Fore.GREEN + "网易4399账号转Sauth", file=sys.stderr)
+    print(Fore.CYAN + "验证码识别api来自Fantnel\nFantnel官网:https://npyyds.top/", file=sys.stderr)
     time.sleep(1)
     UserInfo = sys.argv
     if UserInfo and len(UserInfo) >= 3:
