@@ -2,7 +2,7 @@ from pathlib import Path
 import subprocess
 
 Cache = Path(__file__).parent / "Cache"
-config=r"D:\something\Git source\SomePythonFiles\Bypass Launcher\Cache\temp.config"
+config= Cache /  "temp.config"
 
 if __name__ == "__main__":
     subprocess.run(
