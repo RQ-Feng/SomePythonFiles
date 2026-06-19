@@ -43,94 +43,54 @@ def extract_error_tip(html_text: str) -> str:
             pass
     return ""
 
-def get_sauth_token(username, password) -> str:
-    session = requests.Session()
-    session.verify = False  # 绕过本地证书校验
-
-    session.headers.update(
-        {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36"
-        }
-    )
-
-    # ── Step 1: 获取并识别验证码 ──
-    print("[4399PE] Step 1: 获取并识别验证码...", file=sys.stderr)
-    captcha_id = generate_pe_captcha_id()
-    captcha_url = (
-        f"https://ptlogin.4399.com/ptlogin/captcha.do?captchaId={captcha_id}"
-    )
-    captcha_res = session.get(captcha_url)
-
-    captcha_text = ""
+def get_captcha(session):
+    max_attempts = 5
     api_url = "http://110.42.70.32:13423/api/fantnel/captcha"
-    for attempt in range(1, 4):
-        print(
-            f"[4399PE] Step 1: 获取并识别验证码 (第 {attempt}/3 次尝试)...",
-            file=sys.stderr,
-        )
+    captcha_id = None
+    captcha_url = None
+
+    for attempt in range(1, max_attempts + 1):
+        captcha_id = generate_pe_captcha_id()
+        captcha_url = f"https://ptlogin.4399.com/ptlogin/captcha.do?captchaId={captcha_id}"
+
+        print(f"[4399PE] Step 1: 获取并识别验证码 (第 {attempt}/{max_attempts} 次)...", file=sys.stderr)
         try:
-            # 每次重试必须刷新 ID 和图片，确保请求处于全新状态
-            captcha_id = generate_pe_captcha_id()
-            captcha_url = f"https://ptlogin.4399.com/ptlogin/captcha.do?captchaId={captcha_id}"
             captcha_res = session.get(captcha_url, timeout=8)
-
-            # 提交远程识别
-            api_res = session.post(
-                api_url, data=captcha_res.content, timeout=8
-            )
+            api_res = session.post(api_url, data=captcha_res.content, timeout=8)
             api_data = api_res.json()
-
             if api_data.get("code") == 1:
                 captcha_text = str(api_data.get("data", "")).strip().lower()
-                print(
-                    f"[4399PE] 验证码自动识别成功: {captcha_text}",
-                    file=sys.stderr,
-                )
-                break  # 识别成功，提前跳出重试循环
-            else:
-                raise Exception(f"接口响应 code 错误: {api_data.get('msg')}")
+                print(f"[4399PE] 验证码自动识别成功: {captcha_text}", file=sys.stderr)
+                return captcha_id, captcha_text
+            raise Exception(f"接口响应错误: {api_data.get('msg')}")
         except Exception as e:
-            print(
-                f"⚠️ [4399PE] 第 {attempt}/3 次自动识别失败: {e}",
-                file=sys.stderr,
-            )
-            if attempt < 3:
-                time.sleep(1)  # 失败后等待 1 秒再试，防止请求过快被接口熔断
+            print(f"⚠️ [4399PE] 第 {attempt}/{max_attempts} 次验证码识别失败: {e}", file=sys.stderr)
+            if attempt < max_attempts:
+                time.sleep(1)
+                continue
 
-    # 3 次重试都失败后的 Fallback 兜底方案
-    if not captcha_text:
-        print(
-            f"⚠️ [4399PE] 远程识别连续 3 次失败，正在为您切换到手动模式...",
-            file=sys.stderr,
-        )
-        # 极端防错：如果因不可抗力连 URL 都没初始化成功，则在此处进行补救生成
-        if not captcha_url:
-            captcha_id = generate_pe_captcha_id()
-            captcha_url = f"https://ptlogin.4399.com/ptlogin/captcha.do?captchaId={captcha_id}"
+    print(f"⚠️ [4399PE] 远程识别连续 {max_attempts} 次失败，正在为您切换到手动模式...", file=sys.stderr)
+    print(f"请打开验证码 URL 查看图片: {captcha_url}", file=sys.stderr)
+    captcha_text = input("请输入看到的 4 位验证码: ").strip().lower()
+    return captcha_id, captcha_text
 
-        print(f"请打开验证码 URL 查看图片: {captcha_url}", file=sys.stderr)
-        captcha_text = input("请输入看到的 4 位验证码: ").strip().lower()
 
-    # ── Step 2: 获取 OAuth 参数 ──
-    print("[4399PE] Step 2: 获取 OAuth 参数...", file=sys.stderr)
+def get_oauth(session):
     callback_config_url = "https://m.4399api.com/openapi/oauth-callback.html?gamekey=44770&game_key=115716"
-    oauth_res = session.get(callback_config_url)
+    oauth_res = session.get(callback_config_url, timeout=10)
     oauth_data = oauth_res.json()
 
     oauth_url = oauth_data.get("result", "")
     if not oauth_url:
         raise Exception(f"获取 oauth URL 失败: {oauth_res.text}")
 
-    # 解析 URL Query 参数
-    from urllib.parse import parse_qs, urlparse
-
     parsed_query = parse_qs(urlparse(oauth_url).query)
     client_id = parsed_query.get("client_id", [""])[0]
     state = parsed_query.get("state", [""])[0]
     ref_val = parsed_query.get("ref", [""])[0]
+    return client_id, state, ref_val
 
-    # ── Step 3: POST loginAndAuthorize (禁止自动重定向) ──
-    print("[4399PE] Step 3: 提交登录表单...", file=sys.stderr)
+def post_login(session, username, password, captcha_id, captcha_text, client_id, state, ref_val):
     payload = {
         "auth_action": "ORILOGIN",
         "bizId": "2100001792",
@@ -150,85 +110,121 @@ def get_sauth_token(username, password) -> str:
     }
 
     login_url = "https://ptlogin.4399.com/oauth2/loginAndAuthorize.do?channel=&sdk=op&sdk_version=3.12.2.503"
-    # allow_redirects=False 对应 C# 中的 AllowAutoRedirect = false
-    login_res = session.post(login_url, data=payload, allow_redirects=False)
+    try:
+        login_res = session.post(login_url, data=payload, allow_redirects=False, timeout=10)
+    except requests.RequestException as e:
+        return None, None, f"request_failed: {e}"
 
-    # ── Step 4: 处理 302 重定向并请求回调 ──
     if login_res.status_code in (301, 302):
         location = login_res.headers.get("Location")
         if not location:
-            raise Exception("登录成功但未在响应头中获取到 Location 地址")
+            return None, None, "request_failed: 未获取到重定向 Location"
 
-        print(
-            f"[4399PE] Step 4: 捕获到 302 重定向，请求回调地址...",
-            file=sys.stderr,
-        )
-        callback_res = session.get(location)
-        callback_json = callback_res.json()
+        print("[4399PE] 捕获到 302 重定向，请求回调地址...", file=sys.stderr)
+        callback_res = session.get(location, timeout=10)
+        try:
+            callback_json = callback_res.json()
+        except ValueError:
+            return None, None, f"request_failed: 回调结果不是 JSON: {callback_res.text}"
 
         result_obj = callback_json.get("result", {})
         uid = result_obj.get("uid")
         user_state = result_obj.get("state")
-
         if not uid or not user_state:
-            raise Exception(f"OAuth 回调数据解析缺少 uid/state: {callback_json}")
-    else:
-        # 未触发重定向说明登录失败，解析 HTML 错误体
-        response_body = login_res.text
-        if "验证码错误" in response_body:
-            raise Exception("4399 登录返回错误: 验证码错误")
-        error_tip = extract_error_tip(response_body)
-        if error_tip:
-            raise Exception(f"4399 登录返回错误: {error_tip}")
-        raise Exception("未知登录错误或密码错误")
+            return None, None, f"request_failed: OAuth 回调数据解析缺少 uid/state: {callback_json}"
 
-    # ── Step 5: 构建手游端标准的 SAuth 结构体 ──
-    print(
-        f"[4399PE] Step 5: 成功获取 uid={uid}, 开始构建 SAuth 凭证...",
-        file=sys.stderr,
-    )
+        return uid, user_state, "success"
 
-    sauth_data = {
-        "aim_info": json.dumps(
-            {"aim": "127.0.0.1", "country": "CN", "tz": "+0800", "tzid": ""},
-            separators=(",", ":"),
-        ),
-        "realname": json.dumps(
-            {"realname_type": 2}, separators=(",", ":")
-        ),  # 对应 C# 中的整数 2
-        "app_channel": "4399com",
-        "platform": "ad",  # 对应手游 Android 标识
-        "client_login_sn": "Random_" + ''.join(random.choices(string.ascii_letters, k=16)),  # 对齐 C# 硬编码
-        "gameid": "x19",
-        "login_channel": "4399com",
-        "sdk_version": "3.12.2",  # 手游 SDK 版本
-        "sdkuid": str(uid),
-        "sessionid": str(user_state),
-        "udid": generate_pe_udid(),
-        "deviceid": "Random_" + ''.join(random.choices(string.ascii_letters, k=16)),  # 对齐 C# 硬编码
-    }
+    response_body = login_res.text
+    if "验证码错误" in response_body:
+        return None, None, "captcha_error"
+    error_tip = extract_error_tip(response_body)
+    if error_tip:
+        return None, None, error_tip
+    return None, None, "request_failed: 未知登录错误或密码错误"
 
-    # 严格按照 C# 代码中的无空格紧凑 JSON 序列化形式
-    sauth_json_str = json.dumps(sauth_data, separators=(",", ":"))
+def get_sauth_token(username, password) -> str:
+    session = requests.Session()
+    session.verify = False  # 绕过本地证书校验
 
-    # ── Step 6: 请求网易手游验证端进行 uni_sauth 激活 ──
-    print(
-        "[4399PE] Step 6: 正在向网易手游端发送 uni_sauth 激活请求...",
-        file=sys.stderr,
-    )
-    sauth_url = "https://mgbsdk.matrix.netease.com/x19/sdk/uni_sauth"
-    sauth_headers = {"Content-Type": "application/json"}
+    session.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36"})
 
-    uni_res = session.post(
-        sauth_url, data=sauth_json_str, headers=sauth_headers, timeout=10
-    )
-    print(f"[4399PE] uni_sauth 校验端返回完成", file=sys.stderr)
+    max_attempts = 5
+    attempt = 0
+    while attempt < max_attempts:
+        attempt += 1
+        print(f"[4399PE] 登录循环尝试: 第 {attempt}/{max_attempts} 次", file=sys.stderr)
 
-    # 封装为外部调用期望的最终输出格式
-    final_output = json.dumps(
-        {"sauth_json": sauth_json_str}, separators=(",", ":")
-    )
-    return final_output
+        captcha_id, captcha_text = get_captcha(session)
+        print("[4399PE] Step 2: 获取 OAuth 参数...", file=sys.stderr)
+        client_id, state, ref_val = get_oauth(session)
+        print("[4399PE] Step 3: 提交登录表单...", file=sys.stderr)
+        uid, user_state, status = post_login(
+            session,
+            username,
+            password,
+            captcha_id,
+            captcha_text,
+            client_id,
+            state,
+            ref_val,
+        )
+
+        if status == "success":
+            print(
+                f"[4399PE] Step 4: 成功获取 uid={uid}, 开始构建 SAuth 凭证...",
+                file=sys.stderr,
+            )
+            sauth_data = {
+                "aim_info": json.dumps(
+                    {"aim": "127.0.0.1", "country": "CN", "tz": "+0800", "tzid": ""},
+                    separators=(",", ":"),
+                ),
+                "realname": json.dumps(
+                    {"realname_type": 2}, separators=(",", ":")
+                ),
+                "app_channel": "4399com",
+                "platform": "ad",
+                "client_login_sn": "Random_" + ''.join(random.choices(string.ascii_letters, k=16)),
+                "gameid": "x19",
+                "login_channel": "4399com",
+                "sdk_version": "3.12.2",
+                "sdkuid": str(uid),
+                "sessionid": str(user_state),
+                "udid": generate_pe_udid(),
+                "deviceid": "Random_" + ''.join(random.choices(string.ascii_letters, k=16)),
+            }
+            sauth_json_str = json.dumps(sauth_data, separators=(",", ":"))
+
+            print(
+                "[4399PE] Step 5: 正在向网易手游端发送 uni_sauth 激活请求...",
+                file=sys.stderr,
+            )
+            sauth_url = "https://mgbsdk.matrix.netease.com/x19/sdk/uni_sauth"
+            sauth_headers = {"Content-Type": "application/json"}
+            session.post(
+                sauth_url, data=sauth_json_str, headers=sauth_headers, timeout=10
+            )
+            print(f"[4399PE] uni_sauth 校验端返回完成", file=sys.stderr)
+
+            return json.dumps({"sauth_json": sauth_json_str}, separators=(",", ":"))
+
+        if status == "captcha_error":
+            print("[4399PE] 验证码错误，正在返回 Step 1 重新获取验证码...", file=sys.stderr)
+            continue
+
+        if status.startswith("request_failed"):
+            if attempt < max_attempts:
+                print(
+                    f"[4399PE] 登录请求失败，正在返回 Step 1 重新尝试... ({status})",
+                    file=sys.stderr,
+                )
+                continue
+            raise Exception(status)
+
+        raise Exception(f"4399 登录返回错误: {status}")
+
+    raise Exception("连续多次登录失败，已达到最大重试次数")
 
 # ==================== 调用测试入口 ====================
 if __name__ == "__main__":
