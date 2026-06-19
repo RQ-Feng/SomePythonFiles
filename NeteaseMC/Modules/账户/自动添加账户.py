@@ -48,7 +48,7 @@ print(f"已获取网易MC启动器安装路径: {MCPath}")
 with open(accounts_json_path, "r", encoding="utf-8") as f:
     accounts_json = json.load(f)
 
-nekoinsi_api_file = Path(__file__).resolve().parent.parent.parent / "Secure" / "nekoinsi_api.txt"
+nekoinsi_api_file = Path(__file__).resolve().parent.parent.parent.parent / "Secure" / "nekoinsi_api.txt"
 nekoinsi_api = nekoinsi_api_file.read_text(encoding="utf-8")
 params = {"userApiKey": nekoinsi_api}
 

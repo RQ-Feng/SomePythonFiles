@@ -2,20 +2,15 @@ import requests
 import json
 import pyperclip
 import subprocess
+import time
+import winreg
+import sys
 import string,random
 from pathlib import Path
 from datetime import datetime
 
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-accounts_json_path = r"D:\Small-Program\MCLauncher\accounts.json"
-with open(accounts_json_path, "r", encoding="utf-8") as f:
-    accounts_json = json.load(f)
-
-nekoinsi_api_file = Path(__file__).resolve().parent.parent.parent / "Secure" / "nekoinsi_api.txt"
-nekoinsi_api = nekoinsi_api_file.read_text(encoding="utf-8")
-params = {"userApiKey": nekoinsi_api}
 
 def get_new_registered_account(Sauth):
     # 返回一个完整结构的字典
@@ -32,6 +27,32 @@ def get_new_registered_account(Sauth):
         "Notes": ""
     }
 
+print("与WPFLauncher_Hook的账号管理器搭配使用的4399账号自动注册器")
+time.sleep(1)  # 模拟一些等待时间
+try:
+    with winreg.OpenKey(
+        winreg.HKEY_CURRENT_USER,
+        r"Software\Netease\MCLauncher",
+    ) as key:
+        MCPath, _ = winreg.QueryValueEx(key, "InstallLocation")
+except Exception as _:
+    MCPath = input(f"未检测到网易MC启动器安装路径,请手动输入路径(例如 D:\\MCLauncher):")
+
+try:
+    accounts_json_path = Path(MCPath) / "accounts.json"
+except Exception as e:
+    print(f"无法寻找到账号管理器配置文件。错误信息: {e}")
+    sys.exit()
+print(f"已获取网易MC启动器安装路径: {MCPath}")
+
+with open(accounts_json_path, "r", encoding="utf-8") as f:
+    accounts_json = json.load(f)
+
+nekoinsi_api_file = Path(__file__).resolve().parent.parent.parent / "Secure" / "nekoinsi_api.txt"
+nekoinsi_api = nekoinsi_api_file.read_text(encoding="utf-8")
+params = {"userApiKey": nekoinsi_api}
+
+print("正在获取4399账号并转换为Sauth格式...")
 response = requests.get("https://4399.nekoinsi.de/api/alt", params=params,verify = False,timeout=10)
 try:
     response.raise_for_status()
@@ -42,8 +63,8 @@ try:
         print(f"API抛出错误: {data.get('message', 'Unknown error')}")
 except requests.exceptions.RequestException as e:
     print(f"请求失败,请检查API: {e}")
-
 username, password = UserInfo.split("----")
+print("成功获取4399账号。用户名:", username, "密码:", password + "\n正在转换为Sauth格式...")
 
 # 传入外部脚本路径，以及账号、密码参数
 Sauth = subprocess.run(
